@@ -6,6 +6,7 @@ export interface AnswerRecord {
   answerText: string;
   level: Level;
   duration?: number;
+  audioUrl?: string;
 }
 
 export interface Question {
