@@ -1,17 +1,17 @@
+export type Level = 'IM1' | 'IM2' | 'IM3' | 'IH' | 'AL';
+
+export interface AnswerRecord {
+  id: string;
+  date: string;
+  answerText: string;
+  level: Level;
+  duration?: number;
+}
+
 export interface Question {
   id: string;
   text: string;
-  level: Level;
-  createdAt: string;
-}
-
-export interface Answer {
-  id: string;
-  questionId: string;
-  questionText: string;
-  answerText: string;
-  level: Level;
-  date: string;
+  records: AnswerRecord[];
   nextReview?: string;
   reviewCount: number;
 }
@@ -20,6 +20,8 @@ export interface VocabWord {
   id: string;
   word: string;
   meaning: string;
+  partOfSpeech?: string;
+  level?: string;
   from: string;
   date: string;
 }
@@ -30,12 +32,10 @@ export interface StudyStreak {
   longestStreak: number;
 }
 
-export type Level = 'IM1' | 'IM2' | 'IM3' | 'IH' | 'AL';
-
-export const LEVEL_CONFIG: Record<Level, { desc: string; tips: string; color: string }> = {
-  IM1: { desc: '익숙한 주제에 대해 간단한 문장으로 답변. 2~3문장 목표.', tips: '2~3문장 / 기본 시제 / 단순 연결어 (and, but, so)', color: 'blue' },
-  IM2: { desc: '구체적인 예시를 포함한 4~5문장. 다양한 시제와 연결어 활용.', tips: '4~5문장 / 예시 1개 이상 / because, when, although 등', color: 'green' },
-  IM3: { desc: '자세한 설명과 비교·대조 포함. 5~6문장. 어휘 다양성.', tips: '5~6문장 / 비교·대조 (compared to) / 구체적 경험', color: 'amber' },
-  IH:  { desc: '복잡한 주제도 논리적으로 전개. 6~8문장. 고급 어휘.', tips: '6~8문장 / 논리 구조 (서론-본론-결론) / 고급 어휘', color: 'orange' },
-  AL:  { desc: '원어민 수준. 8문장 이상. 관용어, 뉘앙스, 풍부한 어휘.', tips: '8문장 이상 / 관용어·숙어 / 복잡한 문장 구조', color: 'purple' },
+export const LEVEL_CONFIG: Record<Level, { tips: string; color: string; bg: string; border: string; text: string }> = {
+  IM1: { tips: '2~3문장 / 기본 시제 / 단순 연결어', color: 'blue', bg: 'bg-blue-950', border: 'border-blue-800', text: 'text-blue-400' },
+  IM2: { tips: '4~5문장 / 예시 포함 / because, when 등', color: 'green', bg: 'bg-green-950', border: 'border-green-800', text: 'text-green-400' },
+  IM3: { tips: '5~6문장 / 비교·대조 / 구체적 경험', color: 'amber', bg: 'bg-amber-950', border: 'border-amber-800', text: 'text-amber-400' },
+  IH:  { tips: '6~8문장 / 논리 구조 / 고급 어휘', color: 'orange', bg: 'bg-orange-950', border: 'border-orange-800', text: 'text-orange-400' },
+  AL:  { tips: '8문장+ / 관용어·숙어 / 복잡한 문장', color: 'purple', bg: 'bg-purple-950', border: 'border-purple-800', text: 'text-purple-400' },
 };
