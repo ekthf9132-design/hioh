@@ -23,7 +23,7 @@ export default function Home() {
   const [tooltip, setTooltip] = useState<{word:string;x:number;y:number}|null>(null);
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecord | null>(null);
+  const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Record<string, Blob[]>>({});
   const timerRef = useRef<Record<string, NodeJS.Timeout>>({});
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
