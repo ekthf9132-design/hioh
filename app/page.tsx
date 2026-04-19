@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useStorage } from './hooks/useStorage';
 import { Question, AnswerRecord, VocabWord, StudyStreak, Level, LEVEL_CONFIG } from './types';
 
@@ -20,13 +20,10 @@ export default function Home() {
   const [timerRunning, setTimerRunning] = useState<Record<string, boolean>>({});
   const [expandedQ, setExpandedQ] = useState<string | null>(null);
   const [searchVocab, setSearchVocab] = useState('');
-  const [tooltip, setTooltip] = useState<{word:string;x:number;y:number}|null>(null);
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
-  const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Record<string, Blob[]>>({});
   const timerRef = useRef<Record<string, NodeJS.Timeout>>({});
-  const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const LEVELS: Level[] = ['IM1', 'IM2', 'IM3', 'IH', 'AL'];
 
@@ -86,71 +83,41 @@ export default function Home() {
 
   const toggleMic = async (qId: string) => {
     if (activeRec === qId) {
-      recognitionRef.current?.stop();
       mediaRecorderRef.current?.stop();
       setActiveRec(null);
       stopTimer(qId);
       return;
     }
     if (activeRec) {
-      recognitionRef.current?.stop();
       mediaRecorderRef.current?.stop();
+      stopTimer(activeRec);
     }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SR) {
-        const rec = new SR();
-        rec.lang = 'en-US';
-        rec.continuous = true;
-        rec.interimResults = true;
-        rec.maxAlternatives = 1;
-        let final = ansInputs[qId] ? ansInputs[qId].trim() + ' ' : '';
-        rec.onresult = (ev: any) => {
-          let interim = '';
-          for (let i = ev.resultIndex; i < ev.results.length; i++) {
-            const t = ev.results[i][0].transcript;
-            if (ev.results[i].isFinal) final += t + ' ';
-            else interim += t;
-          }
-          setAnsInputs(prev => ({ ...prev, [qId]: final + interim }));
-        };
-        rec.onend = () => {
-          setAnsInputs(prev => ({ ...prev, [qId]: final.trim() }));
-        };
-        rec.onerror = (e: any) => {
-          if (e.error !== 'no-speech') console.log('STT error:', e.error);
-        };
-        rec.start();
-        recognitionRef.current = rec;
-      }
-
       audioChunksRef.current[qId] = [];
-      const mr = new MediaRecorder(stream);
-      mr.ondataavailable = (e) => {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const mr = new MediaRecorder(stream, { mimeType });
+      mr.ondataavailable = (e: any) => {
         if (e.data.size > 0) audioChunksRef.current[qId].push(e.data);
       };
       mr.onstop = () => {
-        const blob = new Blob(audioChunksRef.current[qId], { type: 'audio/webm' });
+        const blob = new Blob(audioChunksRef.current[qId], { type: mimeType });
         const url = URL.createObjectURL(blob);
         setAudioUrls(prev => ({ ...prev, [qId]: url }));
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t: any) => t.stop());
       };
       mr.start(100);
       mediaRecorderRef.current = mr;
-
       setActiveRec(qId);
       startTimer(qId);
     } catch (e) {
-      alert('마이크 권한을 허용해주세요.\n브라우저 주소창 왼쪽 자물쇠 아이콘을 눌러 마이크를 허용하세요.');
+      alert('마이크 권한을 허용해주세요.\n설정 > Safari > 마이크 허용');
     }
   };
 
   const saveAnswer = (qId: string) => {
     const text = ansInputs[qId]?.trim();
-    if (!text) return alert('답변을 입력하거나 말해보세요.');
+    if (!text) return alert('답변을 입력해주세요.');
     const record: AnswerRecord = {
       id: Date.now().toString(),
       date: new Date().toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', weekday: 'short' }),
@@ -201,17 +168,15 @@ export default function Home() {
   };
 
   const saveVocab = (word: string) => {
-    if (vocab.some(v => v.word.toLowerCase() === word.toLowerCase())) { setTooltip(null); return; }
+    if (vocab.some(v => v.word.toLowerCase() === word.toLowerCase())) return;
     setVocab(prev => [...prev, { id: Date.now().toString(), word, meaning: '(사전 검색 후 입력)', partOfSpeech: '', level: '', from: '질문지', date: new Date().toLocaleDateString('ko-KR') }]);
-    setTooltip(null);
   };
 
   const filteredVocab = vocab.filter(v => v.word.toLowerCase().includes(searchVocab.toLowerCase()));
   const totalAnswers = savedQuestions.reduce((acc, q) => acc + q.records.length, 0);
 
   return (
-    <div className="min-h-dvh bg-[#111318] text-white font-sans" onClick={() => setTooltip(null)}>
-
+    <div className="min-h-dvh bg-[#111318] text-white font-sans">
       <div className="flex items-center justify-between px-5 pt-12 pb-4 sticky top-0 bg-[#111318] z-20">
         <span className="text-2xl font-bold text-emerald-400 tracking-tight">hioh</span>
         <div className="flex items-center gap-2 bg-[#1e2128] border border-zinc-700 rounded-full px-4 py-1.5">
@@ -222,7 +187,7 @@ export default function Home() {
 
       <div className="flex border-b border-zinc-800 px-5 sticky top-16 bg-[#111318] z-20">
         {([['practice','연습','👤'],['review','복습','📋'],['vocab','단어장','📖']] as [Tab,string,string][]).map(([t,label,icon]) => (
-          <button key={t} onClick={() => setTab(t)}
+          <button key={t} onClick={() => setTab(t as Tab)}
             className={`flex-1 flex flex-col items-center py-3 gap-0.5 text-xs border-b-2 transition-all ${tab===t?'border-emerald-400 text-emerald-400':'border-transparent text-zinc-600'}`}>
             <span className="text-base">{icon}</span>
             <span>{label}{t==='review'&&reviewDue.length>0?` (${reviewDue.length})`:''}{t==='vocab'&&vocab.length>0?` (${vocab.length})`:''}</span>
@@ -313,24 +278,27 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* 실시간 텍스트 — 항상 표시 */}
-                    <textarea
-                      className={`w-full bg-[#111318] text-sm text-white rounded-xl p-3 resize-none min-h-16 border focus:outline-none transition-all ${isRec?'border-emerald-600':'border-zinc-800'}`}
-                      placeholder={isRec ? "🎙 녹음 중... 말하는 내용이 여기에 실시간으로 표시돼요" : "직접 입력하거나 마이크로 말해보세요..."}
-                      value={ansInputs[q.id] || ''}
-                      onChange={e => setAnsInputs(prev => ({ ...prev, [q.id]: e.target.value }))}
-                    />
-
-                    {/* 녹음된 오디오 미리듣기 */}
+                    {/* 녹음본 미리듣기 */}
                     {audioUrls[q.id] && !isRec && (
-                      <div className="mt-2 bg-[#111318] rounded-xl p-3 flex items-center gap-3">
-                        <span className="text-xs text-zinc-500 font-mono">녹음본</span>
-                        <audio controls src={audioUrls[q.id]} className="flex-1 h-8" style={{filter:'invert(1) hue-rotate(100deg)'}}/>
+                      <div className="mb-3 bg-[#111318] rounded-xl p-3 flex items-center gap-3">
+                        <span className="text-xs text-zinc-500 font-mono flex-shrink-0">녹음본</span>
+                        <audio controls src={audioUrls[q.id]} className="flex-1 h-8"/>
                       </div>
                     )}
 
-                    <div className="bg-[#111318] rounded-2xl p-4 flex items-center justify-between mt-3">
-                      <button onClick={() => { resetTimer(q.id); setAnsInputs(prev=>({...prev,[q.id]:''})); setAudioUrls(prev=>({...prev,[q.id]:''})); }}
+                    {/* 답변 입력 */}
+                    <div className="mb-3">
+                      <div className="text-xs text-zinc-600 font-mono mb-1.5 uppercase tracking-widest">답변 입력</div>
+                      <textarea
+                        className={`w-full bg-[#111318] text-sm text-white rounded-xl p-3 resize-none min-h-20 border focus:outline-none transition-all ${isRec?'border-emerald-600':'border-zinc-800 focus:border-emerald-800'}`}
+                        placeholder="녹음 후 직접 타이핑하거나 텍스트를 입력하세요..."
+                        value={ansInputs[q.id] || ''}
+                        onChange={e => setAnsInputs(prev => ({ ...prev, [q.id]: e.target.value }))}
+                      />
+                    </div>
+
+                    <div className="bg-[#111318] rounded-2xl p-4 flex items-center justify-between">
+                      <button onClick={() => { resetTimer(q.id); setAudioUrls(prev=>({...prev,[q.id]:''})); }}
                         className="w-11 h-11 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 text-lg">
                         ✕
                       </button>
@@ -343,7 +311,7 @@ export default function Home() {
                         )}
                       </button>
                       <button onClick={() => saveAnswer(q.id)}
-                        className="w-11 h-11 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 text-lg">
+                        className="w-11 h-11 rounded-full bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 text-lg">
                         💾
                       </button>
                     </div>
@@ -377,7 +345,7 @@ export default function Home() {
                               {r.audioUrl && (
                                 <div className="mt-2">
                                   <div className="text-xs text-zinc-600 mb-1 font-mono">녹음본</div>
-                                  <audio controls src={r.audioUrl} className="w-full h-8" style={{filter:'invert(0.8) hue-rotate(100deg)'}}/>
+                                  <audio controls src={r.audioUrl} className="w-full h-8"/>
                                 </div>
                               )}
                             </div>
@@ -476,7 +444,7 @@ export default function Home() {
                         {r.audioUrl && (
                           <div className="mt-2">
                             <div className="text-xs text-zinc-600 mb-1 font-mono">녹음본 재생</div>
-                            <audio controls src={r.audioUrl} className="w-full h-8" style={{filter:'invert(0.8) hue-rotate(100deg)'}}/>
+                            <audio controls src={r.audioUrl} className="w-full h-8"/>
                           </div>
                         )}
                       </div>
@@ -508,7 +476,7 @@ export default function Home() {
             {filteredVocab.length === 0 ? (
               <div className="text-center py-16 text-zinc-600 text-sm">
                 <div className="text-4xl mb-3">📖</div>
-                <div>질문에서 단어를 길게 눌러 저장해보세요</div>
+                <div>아래 버튼으로 단어를 직접 추가해보세요</div>
               </div>
             ) : filteredVocab.map((v, i) => (
               <div key={v.id} className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4 flex items-start justify-between">
@@ -520,27 +488,41 @@ export default function Home() {
                     {v.level && <span className="text-xs bg-emerald-950 border border-emerald-800 text-emerald-400 px-2 py-0.5 rounded-full uppercase font-mono">{v.level}</span>}
                   </div>
                 </div>
-                <button onClick={() => playTTS(v.word, `vocab-${i}`)}
-                  className={`w-11 h-11 rounded-full border flex items-center justify-center flex-shrink-0 ml-3 transition-all ${activeTTS===`vocab-${i}`?'bg-emerald-500 border-emerald-400':'bg-emerald-950 border-emerald-800'}`}>
-                  <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6a7 7 0 010 12M9 9v6"/></svg>
-                </button>
+                <div className="flex flex-col gap-2 ml-3">
+                  <button onClick={() => playTTS(v.word, `vocab-${i}`)}
+                    className={`w-11 h-11 rounded-full border flex items-center justify-center transition-all ${activeTTS===`vocab-${i}`?'bg-emerald-500 border-emerald-400':'bg-emerald-950 border-emerald-800'}`}>
+                    <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6a7 7 0 010 12M9 9v6"/></svg>
+                  </button>
+                  <button onClick={() => setVocab(prev => prev.filter((_,j)=>j!==i))}
+                    className="w-11 h-11 rounded-full border border-red-900 bg-red-950 flex items-center justify-center text-red-400 text-sm">
+                    ✕
+                  </button>
+                </div>
               </div>
             ))}
+
+            {/* 단어 직접 추가 */}
+            <div className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4">
+              <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">단어 직접 추가</div>
+              <input id="vocab-word-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-2"
+                placeholder="단어 입력 (예: ephemeral)"/>
+              <input id="vocab-meaning-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-3"
+                placeholder="뜻 입력 (예: 덧없는, 수명이 짧은)"/>
+              <button onClick={() => {
+                const w = (document.getElementById('vocab-word-input') as HTMLInputElement)?.value.trim();
+                const m = (document.getElementById('vocab-meaning-input') as HTMLInputElement)?.value.trim();
+                if (!w) return alert('단어를 입력해주세요.');
+                saveVocab(w);
+                if (m) setVocab(prev => prev.map((v,i) => i===prev.length-1 ? {...v, meaning: m} : v));
+                (document.getElementById('vocab-word-input') as HTMLInputElement).value = '';
+                (document.getElementById('vocab-meaning-input') as HTMLInputElement).value = '';
+              }} className="w-full py-2.5 bg-emerald-500 text-black text-sm font-bold rounded-xl">
+                단어장에 추가 +
+              </button>
+            </div>
           </div>
         )}
       </div>
-
-      {tooltip && (
-        <div className="fixed z-50 bg-[#1e2128] border border-zinc-700 rounded-2xl p-4 w-52 shadow-2xl"
-          style={{ top: tooltip.y, left: Math.min(tooltip.x, window.innerWidth - 220) }}
-          onClick={e => e.stopPropagation()}>
-          <div className="font-bold text-white text-base mb-3">{tooltip.word}</div>
-          <button onClick={() => saveVocab(tooltip.word)}
-            className="w-full py-2.5 bg-emerald-500 text-black text-sm font-bold rounded-xl">
-            단어장에 저장
-          </button>
-        </div>
-      )}
     </div>
   );
 }
