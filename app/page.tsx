@@ -21,7 +21,10 @@ export default function Home() {
   const [expandedQ, setExpandedQ] = useState<string | null>(null);
   const [searchVocab, setSearchVocab] = useState('');
   const [tooltip, setTooltip] = useState<{word:string;x:number;y:number}|null>(null);
+  const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecord | null>(null);
+  const audioChunksRef = useRef<Record<string, Blob[]>>({});
   const timerRef = useRef<Record<string, NodeJS.Timeout>>({});
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -61,6 +64,90 @@ export default function Home() {
     setPasteText('');
   };
 
+  const startTimer = (qId: string) => {
+    if (timerRunning[qId]) return;
+    setTimerRunning(prev => ({ ...prev, [qId]: true }));
+    timerRef.current[qId] = setInterval(() => {
+      setTimer(prev => ({ ...prev, [qId]: (prev[qId] || 0) + 1 }));
+    }, 1000);
+  };
+
+  const stopTimer = (qId: string) => {
+    clearInterval(timerRef.current[qId]);
+    setTimerRunning(prev => ({ ...prev, [qId]: false }));
+  };
+
+  const resetTimer = (qId: string) => {
+    stopTimer(qId);
+    setTimer(prev => ({ ...prev, [qId]: 0 }));
+  };
+
+  const fmtTime = (s: number) => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+  const toggleMic = async (qId: string) => {
+    if (activeRec === qId) {
+      recognitionRef.current?.stop();
+      mediaRecorderRef.current?.stop();
+      setActiveRec(null);
+      stopTimer(qId);
+      return;
+    }
+    if (activeRec) {
+      recognitionRef.current?.stop();
+      mediaRecorderRef.current?.stop();
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SR) {
+        const rec = new SR();
+        rec.lang = 'en-US';
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
+        let final = ansInputs[qId] ? ansInputs[qId].trim() + ' ' : '';
+        rec.onresult = (ev: any) => {
+          let interim = '';
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const t = ev.results[i][0].transcript;
+            if (ev.results[i].isFinal) final += t + ' ';
+            else interim += t;
+          }
+          setAnsInputs(prev => ({ ...prev, [qId]: final + interim }));
+        };
+        rec.onend = () => {
+          setAnsInputs(prev => ({ ...prev, [qId]: final.trim() }));
+        };
+        rec.onerror = (e: any) => {
+          if (e.error !== 'no-speech') console.log('STT error:', e.error);
+        };
+        rec.start();
+        recognitionRef.current = rec;
+      }
+
+      audioChunksRef.current[qId] = [];
+      const mr = new MediaRecorder(stream);
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current[qId].push(e.data);
+      };
+      mr.onstop = () => {
+        const blob = new Blob(audioChunksRef.current[qId], { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        setAudioUrls(prev => ({ ...prev, [qId]: url }));
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mr.start(100);
+      mediaRecorderRef.current = mr;
+
+      setActiveRec(qId);
+      startTimer(qId);
+    } catch (e) {
+      alert('마이크 권한을 허용해주세요.\n브라우저 주소창 왼쪽 자물쇠 아이콘을 눌러 마이크를 허용하세요.');
+    }
+  };
+
   const saveAnswer = (qId: string) => {
     const text = ansInputs[qId]?.trim();
     if (!text) return alert('답변을 입력하거나 말해보세요.');
@@ -70,6 +157,7 @@ export default function Home() {
       answerText: text,
       level,
       duration: timer[qId] || 0,
+      audioUrl: audioUrls[qId] || undefined,
     };
     const updatedQ = questions.map(q => {
       if (q.id !== qId) return q;
@@ -83,25 +171,10 @@ export default function Home() {
       return [...prev, updatedQ.find(u => u.id === qId)!];
     });
     updateStreak();
-    stopTimer(qId);
+    resetTimer(qId);
     setAnsInputs(prev => ({ ...prev, [qId]: '' }));
+    setAudioUrls(prev => ({ ...prev, [qId]: '' }));
   };
-
-  const startTimer = (qId: string) => {
-    if (timerRunning[qId]) return;
-    setTimerRunning(prev => ({ ...prev, [qId]: true }));
-    timerRef.current[qId] = setInterval(() => {
-      setTimer(prev => ({ ...prev, [qId]: (prev[qId] || 0) + 1 }));
-    }, 1000);
-  };
-
-  const stopTimer = (qId: string) => {
-    clearInterval(timerRef.current[qId]);
-    setTimerRunning(prev => ({ ...prev, [qId]: false }));
-    setTimer(prev => ({ ...prev, [qId]: 0 }));
-  };
-
-  const fmtTime = (s: number) => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 
   const playTTS = (text: string, id: string) => {
     if (!text.trim()) return;
@@ -116,31 +189,6 @@ export default function Home() {
     window.speechSynthesis.speak(u);
   };
 
-  const toggleMic = (qId: string) => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return alert('HTTPS 환경의 크롬에서 사용 가능해요.');
-    if (activeRec === qId) { recognitionRef.current?.stop(); setActiveRec(null); stopTimer(qId); return; }
-    if (activeRec) recognitionRef.current?.stop();
-    const rec = new SR();
-    rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
-    let final = ansInputs[qId] ? ansInputs[qId].trim() + ' ' : '';
-    rec.onresult = (ev: any) => {
-      let interim = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const t = ev.results[i][0].transcript;
-        if (ev.results[i].isFinal) final += t + ' ';
-        else interim += t;
-      }
-      setAnsInputs(prev => ({ ...prev, [qId]: final + interim }));
-    };
-    rec.onend = () => { setAnsInputs(prev => ({ ...prev, [qId]: final.trim() })); setActiveRec(null); };
-    rec.onerror = (e: any) => { setActiveRec(null); stopTimer(qId); if (e.error === 'not-allowed') alert('마이크 권한을 허용해주세요.'); };
-    rec.start();
-    recognitionRef.current = rec;
-    setActiveRec(qId);
-    startTimer(qId);
-  };
-
   const reviewDue = savedQuestions.filter(q => q.nextReview && new Date(q.nextReview) <= new Date() && q.records.length > 0);
 
   const markReviewed = (id: string) => {
@@ -150,13 +198,6 @@ export default function Home() {
       return { ...q, reviewCount: q.reviewCount + 1, nextReview: new Date(Date.now() + days * 86400000).toISOString() };
     }));
     updateStreak();
-  };
-
-  const handleLongPress = (e: any, word: string) => {
-    pressTimer.current = setTimeout(() => {
-      const rect = (e.target as HTMLElement).getBoundingClientRect();
-      setTooltip({ word, x: rect.left, y: rect.bottom + 6 });
-    }, 600);
   };
 
   const saveVocab = (word: string) => {
@@ -169,9 +210,8 @@ export default function Home() {
   const totalAnswers = savedQuestions.reduce((acc, q) => acc + q.records.length, 0);
 
   return (
-    <div className="min-h-dvh bg-[#111318] text-white font-sans select-none" onClick={() => setTooltip(null)}>
+    <div className="min-h-dvh bg-[#111318] text-white font-sans" onClick={() => setTooltip(null)}>
 
-      {/* 헤더 */}
       <div className="flex items-center justify-between px-5 pt-12 pb-4 sticky top-0 bg-[#111318] z-20">
         <span className="text-2xl font-bold text-emerald-400 tracking-tight">hioh</span>
         <div className="flex items-center gap-2 bg-[#1e2128] border border-zinc-700 rounded-full px-4 py-1.5">
@@ -180,7 +220,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* 탭바 */}
       <div className="flex border-b border-zinc-800 px-5 sticky top-16 bg-[#111318] z-20">
         {([['practice','연습','👤'],['review','복습','📋'],['vocab','단어장','📖']] as [Tab,string,string][]).map(([t,label,icon]) => (
           <button key={t} onClick={() => setTab(t)}
@@ -193,10 +232,8 @@ export default function Home() {
 
       <div className="px-5 pb-32 pt-5">
 
-        {/* ── 연습 탭 ── */}
         {tab === 'practice' && (
           <div className="space-y-5">
-            {/* 등급 선택 */}
             <div>
               <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">TARGET LEVEL</div>
               <div className="flex gap-2">
@@ -213,7 +250,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 질문 입력 */}
             <div className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4">
               <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">Paste your OPIc question here...</div>
               <textarea
@@ -228,7 +264,6 @@ export default function Home() {
               </button>
             </div>
 
-            {/* 진행률 */}
             {questions.length > 0 && (
               <div className="flex items-center gap-3">
                 <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
@@ -241,7 +276,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* 질문 카드 */}
             {questions.map((q) => {
               const isRec = activeRec === q.id;
               const isDone = q.records.length > 0;
@@ -263,63 +297,68 @@ export default function Home() {
                       "{q.text}"
                     </div>
 
-                    {/* 타이머 원형 */}
                     <div className="flex flex-col items-center my-4">
                       <div className="relative w-32 h-32">
                         <svg className="w-32 h-32 -rotate-90" viewBox="0 0 120 120">
                           <circle cx="60" cy="60" r="54" fill="none" stroke="#1e2128" strokeWidth="8"/>
-                          <circle cx="60" cy="60" r="54" fill="none" stroke="#10b981" strokeWidth="8"
+                          <circle cx="60" cy="60" r="54" fill="none" stroke={isRec?"#10b981":"#374151"} strokeWidth="8"
                             strokeDasharray={circumference}
                             strokeDashoffset={circumference * (1 - progress)}
                             strokeLinecap="round" className="transition-all duration-1000"/>
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
                           <span className="text-2xl font-bold font-mono text-white">{fmtTime(t)}</span>
-                          <span className="text-xs text-zinc-500 uppercase tracking-widest">REMAINING</span>
+                          <span className="text-xs text-zinc-500 uppercase tracking-widest">{isRec ? 'RECORDING' : 'READY'}</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* 마이크 컨트롤 */}
-                    <div className="bg-[#111318] rounded-2xl p-4 flex items-center justify-between">
-                      <button onClick={() => { stopTimer(q.id); setAnsInputs(prev=>({...prev,[q.id]:''})); }}
-                        className="w-11 h-11 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400">
+                    {/* 실시간 텍스트 — 항상 표시 */}
+                    <textarea
+                      className={`w-full bg-[#111318] text-sm text-white rounded-xl p-3 resize-none min-h-16 border focus:outline-none transition-all ${isRec?'border-emerald-600':'border-zinc-800'}`}
+                      placeholder={isRec ? "🎙 녹음 중... 말하는 내용이 여기에 실시간으로 표시돼요" : "직접 입력하거나 마이크로 말해보세요..."}
+                      value={ansInputs[q.id] || ''}
+                      onChange={e => setAnsInputs(prev => ({ ...prev, [q.id]: e.target.value }))}
+                    />
+
+                    {/* 녹음된 오디오 미리듣기 */}
+                    {audioUrls[q.id] && !isRec && (
+                      <div className="mt-2 bg-[#111318] rounded-xl p-3 flex items-center gap-3">
+                        <span className="text-xs text-zinc-500 font-mono">녹음본</span>
+                        <audio controls src={audioUrls[q.id]} className="flex-1 h-8" style={{filter:'invert(1) hue-rotate(100deg)'}}/>
+                      </div>
+                    )}
+
+                    <div className="bg-[#111318] rounded-2xl p-4 flex items-center justify-between mt-3">
+                      <button onClick={() => { resetTimer(q.id); setAnsInputs(prev=>({...prev,[q.id]:''})); setAudioUrls(prev=>({...prev,[q.id]:''})); }}
+                        className="w-11 h-11 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 text-lg">
                         ✕
                       </button>
                       <button onClick={() => toggleMic(q.id)}
-                        className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isRec?'bg-emerald-400 shadow-lg shadow-emerald-400/30':'bg-emerald-500'}`}>
-                        <svg className="w-7 h-7 fill-black" viewBox="0 0 24 24">
-                          <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm6 9a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93V20H8v2h8v-2h-3v-2.07A8 8 0 0 0 20 10h-2z"/>
-                        </svg>
+                        className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${isRec?'bg-red-500 shadow-lg shadow-red-500/30':'bg-emerald-500 shadow-lg shadow-emerald-500/20'}`}>
+                        {isRec ? (
+                          <svg className="w-6 h-6 fill-white" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        ) : (
+                          <svg className="w-7 h-7 fill-black" viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm6 9a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93V20H8v2h8v-2h-3v-2.07A8 8 0 0 0 20 10h-2z"/></svg>
+                        )}
                       </button>
                       <button onClick={() => saveAnswer(q.id)}
                         className="w-11 h-11 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 text-lg">
                         💾
                       </button>
                     </div>
-
-                    {/* 실시간 텍스트 */}
-                    {(ansInputs[q.id] || isRec) && (
-                      <textarea
-                        className="w-full mt-3 bg-[#111318] text-sm text-white rounded-xl p-3 resize-none min-h-16 border border-zinc-800 focus:outline-none focus:border-emerald-800"
-                        placeholder="녹음 내용이 여기에 표시돼요..."
-                        value={ansInputs[q.id] || ''}
-                        onChange={e => setAnsInputs(prev => ({ ...prev, [q.id]: e.target.value }))}
-                      />
-                    )}
                   </div>
 
-                  {/* 이전 답변 비교 */}
                   {isDone && (
                     <div className="border-t border-zinc-800">
                       <button onClick={() => setExpandedQ(expandedQ===q.id?null:q.id)}
                         className="w-full px-4 py-3 text-xs text-zinc-500 flex items-center justify-between">
-                        <span className="font-mono uppercase tracking-widest">이전 답변 {q.records.length}개</span>
+                        <span className="font-mono uppercase tracking-widest">이전 답변 {q.records.length}개 비교</span>
                         <span>{expandedQ===q.id?'▲':'▼'}</span>
                       </button>
                       {expandedQ===q.id && (
                         <div className="px-4 pb-4 space-y-3">
-                          {q.records.slice().reverse().map((r, i) => (
+                          {q.records.slice().reverse().map((r) => (
                             <div key={r.id} className="bg-[#111318] rounded-xl p-3">
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs text-zinc-500 font-mono">{r.date}</span>
@@ -328,13 +367,19 @@ export default function Home() {
                                   {r.duration ? <span className="text-xs text-zinc-600 font-mono">{fmtTime(r.duration)}</span> : null}
                                   <button onClick={() => playTTS(r.answerText, `rec-${r.id}`)}
                                     className={`text-xs px-2 py-1 rounded-lg border ${activeTTS===`rec-${r.id}`?'bg-emerald-950 border-emerald-800 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
-                                    ▶
+                                    TTS ▶
                                   </button>
                                 </div>
                               </div>
-                              <div className="text-sm text-zinc-300 leading-relaxed border-l-2 border-zinc-700 pl-3">
+                              <div className="text-sm text-zinc-300 leading-relaxed border-l-2 border-zinc-700 pl-3 mb-2">
                                 {r.answerText}
                               </div>
+                              {r.audioUrl && (
+                                <div className="mt-2">
+                                  <div className="text-xs text-zinc-600 mb-1 font-mono">녹음본</div>
+                                  <audio controls src={r.audioUrl} className="w-full h-8" style={{filter:'invert(0.8) hue-rotate(100deg)'}}/>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -347,15 +392,12 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── 복습 탭 ── */}
         {tab === 'review' && (
           <div className="space-y-4">
             <div>
               <div className="text-3xl font-bold text-white mb-1">복습</div>
               <div className="text-sm text-zinc-500">기억이 사라지기 전에 다시 한 번 복습하세요.<br/>망각 곡선을 이겨내는 스마트한 학습 여정입니다.</div>
             </div>
-
-            {/* 통계 */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4">
                 <div className="text-2xl font-bold text-emerald-400">{totalAnswers}</div>
@@ -370,7 +412,7 @@ export default function Home() {
             {reviewDue.length > 0 && (
               <div>
                 <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">
-                  UPCOMING REVIEWS <span className="text-emerald-400">Scheduled intervals {reviewDue.length}/{savedQuestions.length}</span>
+                  UPCOMING REVIEWS <span className="text-emerald-400">{reviewDue.length}/{savedQuestions.length}</span>
                 </div>
                 {reviewDue.map(q => (
                   <div key={q.id} className="bg-[#1e2128] border border-amber-900 rounded-2xl p-4 mb-3">
@@ -378,16 +420,15 @@ export default function Home() {
                       <span className="text-xs bg-amber-950 border border-amber-800 text-amber-400 px-2 py-0.5 rounded-full font-mono">
                         {q.reviewCount === 0 ? '3 DAY INTERVAL' : '7 DAY INTERVAL'}
                       </span>
-                      <span className="text-xs text-zinc-600 font-mono">ID-{q.id.slice(-4)}</span>
                     </div>
-                    <div className="text-sm text-zinc-400 mb-1 truncate">"{q.text.slice(0,40)}..."</div>
-                    <div className="text-sm text-white border-l-2 border-amber-600 pl-3 mb-3">
-                      {q.records[q.records.length-1]?.answerText.slice(0,60)}...
+                    <div className="text-sm text-white mb-2">"{q.text}"</div>
+                    <div className="text-sm text-zinc-400 border-l-2 border-amber-700 pl-3 mb-3">
+                      {q.records[q.records.length-1]?.answerText.slice(0,80)}...
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => playTTS(q.records[q.records.length-1]?.answerText||'', `rev-${q.id}`)}
-                        className={`flex-none h-10 px-4 rounded-xl border text-xs font-mono ${activeTTS===`rev-${q.id}`?'bg-emerald-950 border-emerald-800 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-300'}`}>
-                        ▶ 듣기
+                        className={`h-10 px-4 rounded-xl border text-xs font-mono ${activeTTS===`rev-${q.id}`?'bg-emerald-950 border-emerald-800 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-300'}`}>
+                        ▶ TTS
                       </button>
                       <button onClick={() => markReviewed(q.id)}
                         className="flex-1 h-10 bg-emerald-500 text-black text-xs font-bold rounded-xl uppercase tracking-widest">
@@ -399,57 +440,54 @@ export default function Home() {
               </div>
             )}
 
-            {/* 전체 기록 */}
-            {savedQuestions.filter(q=>q.records.length>0).length > 0 && (
-              <div>
-                <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">TOTAL SPEAKING HISTORY</div>
-                {savedQuestions.filter(q=>q.records.length>0).map(q => (
-                  <div key={q.id} className="bg-[#1e2128] border border-zinc-800 rounded-2xl mb-3 overflow-hidden">
-                    <button onClick={() => setExpandedQ(expandedQ===q.id?null:q.id)}
-                      className="w-full p-4 flex items-center gap-3 text-left">
-                      <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center flex-shrink-0">
-                        <svg className="w-5 h-5 fill-zinc-400" viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm6 9a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93V20H8v2h8v-2h-3v-2.07A8 8 0 0 0 20 10h-2z"/></svg>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-white truncate">{q.text.slice(0,35)}...</div>
-                        <div className="text-xs text-zinc-500">{q.records[q.records.length-1]?.date} · {q.records.length}회 답변</div>
-                      </div>
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${getLevelStyle(q.records[q.records.length-1]?.level||'IM1')}`}>
-                        {q.records[q.records.length-1]?.level?.slice(0,1)}
-                      </div>
-                    </button>
-                    {expandedQ===q.id && (
-                      <div className="px-4 pb-4 space-y-2 border-t border-zinc-800 pt-3">
-                        {q.records.slice().reverse().map(r => (
-                          <div key={r.id} className="bg-[#111318] rounded-xl p-3">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs text-zinc-500 font-mono">{r.date}</span>
-                              <div className="flex gap-2 items-center">
-                                <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${getLevelStyle(r.level)}`}>{r.level}</span>
-                                <button onClick={() => playTTS(r.answerText, `hr-${r.id}`)}
-                                  className={`text-xs px-2 py-1 rounded-lg border ${activeTTS===`hr-${r.id}`?'bg-emerald-950 border-emerald-800 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>▶</button>
-                              </div>
-                            </div>
-                            <div className="text-sm text-zinc-300 leading-relaxed">{r.answerText}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {savedQuestions.filter(q=>q.records.length>0).length===0 && (
+            <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">TOTAL SPEAKING HISTORY</div>
+            {savedQuestions.filter(q=>q.records.length>0).length === 0 ? (
               <div className="text-center py-16 text-zinc-600 text-sm">
                 <div className="text-4xl mb-3">📋</div>
                 <div>연습 후 저장하면 기록이 쌓여요</div>
               </div>
-            )}
+            ) : savedQuestions.filter(q=>q.records.length>0).map(q => (
+              <div key={q.id} className="bg-[#1e2128] border border-zinc-800 rounded-2xl mb-3 overflow-hidden">
+                <button onClick={() => setExpandedQ(expandedQ===q.id?null:q.id)}
+                  className="w-full p-4 flex items-center gap-3 text-left">
+                  <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 fill-zinc-400" viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm6 9a6 6 0 0 1-12 0H4a8 8 0 0 0 7 7.93V20H8v2h8v-2h-3v-2.07A8 8 0 0 0 20 10h-2z"/></svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white truncate">{q.text.slice(0,40)}</div>
+                    <div className="text-xs text-zinc-500">{q.records[q.records.length-1]?.date} · {q.records.length}회 답변</div>
+                  </div>
+                  <span className="text-zinc-600">{expandedQ===q.id?'▲':'▼'}</span>
+                </button>
+                {expandedQ===q.id && (
+                  <div className="px-4 pb-4 space-y-3 border-t border-zinc-800 pt-3">
+                    {q.records.slice().reverse().map(r => (
+                      <div key={r.id} className="bg-[#111318] rounded-xl p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs text-zinc-500 font-mono">{r.date}</span>
+                          <div className="flex gap-2 items-center">
+                            <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${getLevelStyle(r.level)}`}>{r.level}</span>
+                            {r.duration ? <span className="text-xs text-zinc-600 font-mono">{fmtTime(r.duration)}</span> : null}
+                            <button onClick={() => playTTS(r.answerText, `hr-${r.id}`)}
+                              className={`text-xs px-2 py-1 rounded-lg border ${activeTTS===`hr-${r.id}`?'bg-emerald-950 border-emerald-800 text-emerald-400':'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>TTS ▶</button>
+                          </div>
+                        </div>
+                        <div className="text-sm text-zinc-300 leading-relaxed border-l-2 border-zinc-700 pl-3 mb-2">{r.answerText}</div>
+                        {r.audioUrl && (
+                          <div className="mt-2">
+                            <div className="text-xs text-zinc-600 mb-1 font-mono">녹음본 재생</div>
+                            <audio controls src={r.audioUrl} className="w-full h-8" style={{filter:'invert(0.8) hue-rotate(100deg)'}}/>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
-        {/* ── 단어장 탭 ── */}
         {tab === 'vocab' && (
           <div className="space-y-4">
             <div>
@@ -461,18 +499,16 @@ export default function Home() {
                   placeholder="Search words..." value={searchVocab} onChange={e=>setSearchVocab(e.target.value)}/>
               </div>
             </div>
-
             {vocab.length > 0 && (
               <div className="flex items-center justify-between">
                 <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono">RECENT ADDITIONS</div>
                 <button className="text-xs text-emerald-400 font-mono">VIEW ALL</button>
               </div>
             )}
-
             {filteredVocab.length === 0 ? (
               <div className="text-center py-16 text-zinc-600 text-sm">
                 <div className="text-4xl mb-3">📖</div>
-                <div>질문지에서 단어를 길게 눌러 저장해보세요</div>
+                <div>질문에서 단어를 길게 눌러 저장해보세요</div>
               </div>
             ) : filteredVocab.map((v, i) => (
               <div key={v.id} className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4 flex items-start justify-between">
@@ -485,7 +521,7 @@ export default function Home() {
                   </div>
                 </div>
                 <button onClick={() => playTTS(v.word, `vocab-${i}`)}
-                  className={`w-11 h-11 rounded-full border flex items-center justify-center flex-shrink-0 ml-3 ${activeTTS===`vocab-${i}`?'bg-emerald-500 border-emerald-400':'bg-emerald-950 border-emerald-800'}`}>
+                  className={`w-11 h-11 rounded-full border flex items-center justify-center flex-shrink-0 ml-3 transition-all ${activeTTS===`vocab-${i}`?'bg-emerald-500 border-emerald-400':'bg-emerald-950 border-emerald-800'}`}>
                   <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6a7 7 0 010 12M9 9v6"/></svg>
                 </button>
               </div>
@@ -494,7 +530,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* 단어 툴팁 */}
       {tooltip && (
         <div className="fixed z-50 bg-[#1e2128] border border-zinc-700 rounded-2xl p-4 w-52 shadow-2xl"
           style={{ top: tooltip.y, left: Math.min(tooltip.x, window.innerWidth - 220) }}
