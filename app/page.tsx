@@ -516,16 +516,21 @@ export default function Home() {
                   btn.textContent = '검색 중...';
                   btn.disabled = true;
                   try {
-                    const res = await fetch('/api/gemini', {
-                      method: 'POST',
-                      headers: {'Content-Type': 'application/json'},
-                      body: JSON.stringify({ prompt: `영어 단어 "${w}"의 한국어 뜻(품사 포함, 1줄)과 짧은 영어 예문 1개를 JSON으로만 답해줘. 다른 말 하지말고 JSON만. 형식: {"meaning":"명사. 턱","example":"She has a strong chin."}` })
-                    });
-                    const data = await res.json();
-                    const clean = data.text.replace(/```json|```/g, '').trim();
-                    const parsed = JSON.parse(clean);
-                    if (mi) mi.value = parsed.meaning || '';
-                    if (ei) ei.value = parsed.example || '';
+                    const dictRes = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${w}`);
+                    const dictData = await dictRes.json();
+                    let engDef = '';
+                    let example = '';
+                    if (Array.isArray(dictData)) {
+                      const meanings = dictData[0]?.meanings?.[0];
+                      const definition = meanings?.definitions?.[0];
+                      engDef = definition?.definition || '';
+                      example = definition?.example || '';
+                    }
+                    const transRes = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(w)}&langpair=en|ko`);
+                    const transData = await transRes.json();
+                    const korean = transData?.responseData?.translatedText || '';
+                    if (mi) mi.value = korean || engDef;
+                    if (ei) ei.value = example;
                   } catch(e) {
                     alert('자동 검색 실패. 직접 입력해주세요.');
                   }
