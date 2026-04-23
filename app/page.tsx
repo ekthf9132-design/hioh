@@ -503,21 +503,54 @@ export default function Home() {
 
             {/* 단어 직접 추가 */}
             <div className="bg-[#1e2128] border border-zinc-800 rounded-2xl p-4">
-              <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">단어 직접 추가</div>
-              <input id="vocab-word-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-2"
-                placeholder="단어 입력 (예: ephemeral)"/>
-              <input id="vocab-meaning-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-3"
-                placeholder="뜻 입력 (예: 덧없는, 수명이 짧은)"/>
+              <div className="text-xs text-zinc-500 uppercase tracking-widest font-mono mb-3">단어 추가</div>
+              <div className="flex gap-2 mb-2">
+                <input id="vocab-word-input" className="flex-1 bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800"
+                  placeholder="영어 단어 입력 (예: ephemeral)"/>
+                <button id="vocab-auto-btn" onClick={async () => {
+                  const w = (document.getElementById('vocab-word-input') as HTMLInputElement)?.value.trim();
+                  if (!w) return alert('단어를 입력해주세요.');
+                  const btn = document.getElementById('vocab-auto-btn') as HTMLButtonElement;
+                  const mi = document.getElementById('vocab-meaning-input') as HTMLInputElement;
+                  const ei = document.getElementById('vocab-example-input') as HTMLInputElement;
+                  btn.textContent = '검색 중...';
+                  btn.disabled = true;
+                  try {
+                    const res = await fetch('/api/gemini', {
+                      method: 'POST',
+                      headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({ prompt: `영어 단어 "${w}"의 한국어 뜻(품사 포함, 1줄)과 짧은 영어 예문 1개를 JSON으로만 답해줘. 형식: {"meaning":"명사. 덧없는 것","example":"Fame is ephemeral."}` })
+                    });
+                    const data = await res.json();
+                    const clean = data.text.replace(/\`\`\`json|\`\`\`/g, '').trim();
+                    const parsed = JSON.parse(clean);
+                    if (mi) mi.value = parsed.meaning || '';
+                    if (ei) ei.value = parsed.example || '';
+                  } catch(e) {
+                    alert('자동 검색 실패. 직접 입력해주세요.');
+                  }
+                  btn.textContent = '자동입력';
+                  btn.disabled = false;
+                }} className="px-3 py-2.5 bg-emerald-950 border border-emerald-800 text-emerald-400 text-xs rounded-xl font-mono whitespace-nowrap">
+                  자동입력
+                </button>
+              </div>
+              <input id="vocab-meaning-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-2"
+                placeholder="한국어 뜻 (자동입력 또는 직접 입력)"/>
+              <input id="vocab-example-input" className="w-full bg-[#111318] text-sm text-white rounded-xl px-3 py-2.5 border border-zinc-800 focus:outline-none focus:border-emerald-800 mb-3"
+                placeholder="예문 (자동입력 또는 직접 입력)"/>
               <button onClick={() => {
                 const w = (document.getElementById('vocab-word-input') as HTMLInputElement)?.value.trim();
                 const m = (document.getElementById('vocab-meaning-input') as HTMLInputElement)?.value.trim();
+                const e = (document.getElementById('vocab-example-input') as HTMLInputElement)?.value.trim();
                 if (!w) return alert('단어를 입력해주세요.');
-                saveVocab(w);
-                if (m) setVocab(prev => prev.map((v,i) => i===prev.length-1 ? {...v, meaning: m} : v));
+                if (vocab.some(v => v.word.toLowerCase() === w.toLowerCase())) return alert('이미 저장된 단어예요.');
+                setVocab(prev => [...prev, { id: Date.now().toString(), word: w, meaning: m || '(뜻 없음)', partOfSpeech: '', level: '', from: '직접 추가', date: new Date().toLocaleDateString('ko-KR'), example: e || '' }]);
                 (document.getElementById('vocab-word-input') as HTMLInputElement).value = '';
                 (document.getElementById('vocab-meaning-input') as HTMLInputElement).value = '';
+                (document.getElementById('vocab-example-input') as HTMLInputElement).value = '';
               }} className="w-full py-2.5 bg-emerald-500 text-black text-sm font-bold rounded-xl">
-                단어장에 추가 +
+                단어장에 저장 +
               </button>
             </div>
           </div>
